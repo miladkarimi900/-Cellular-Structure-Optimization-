@@ -1,0 +1,52 @@
+"""
+Benchmark functions for testing CSO algorithm
+"""
+
+import numpy as np
+from typing import Callable
+
+def sphere_function(x: np.ndarray) -> float:
+    """Sphere function - Unimodal, convex"""
+    return np.sum(x**2)
+
+def rastrigin_function(x: np.ndarray) -> float:
+    """Rastrigin function - Highly multimodal"""
+    n = len(x)
+    return 10 * n + np.sum(x**2 - 10 * np.cos(2 * np.pi * x))
+
+def ackley_function(x: np.ndarray) -> float:
+    """Ackley function - Many local minima"""
+    n = len(x)
+    sum1 = np.sum(x**2)
+    sum2 = np.sum(np.cos(2 * np.pi * x))
+    return -20 * np.exp(-0.2 * np.sqrt(sum1/n)) - np.exp(sum2/n) + 20 + np.e
+
+def rosenbrock_function(x: np.ndarray) -> float:
+    """Rosenbrock function - Valley-shaped"""
+    return np.sum(100 * (x[1:] - x[:-1]**2)**2 + (1 - x[:-1])**2)
+
+def griewank_function(x: np.ndarray) -> float:
+    """Griewank function - Many local minima"""
+    sum_part = np.sum(x**2) / 4000
+    prod_part = np.prod(np.cos(x / np.sqrt(np.arange(1, len(x) + 1))))
+    return sum_part - prod_part + 1
+
+# Dictionary of all benchmark functions
+BENCHMARK_FUNCTIONS = {
+    'sphere': sphere_function,
+    'rastrigin': rastrigin_function,
+    'ackley': ackley_function,
+    'rosenbrock': rosenbrock_function,
+    'griewank': griewank_function
+}
+
+def get_function_bounds(function_name: str, dimensions: int) -> list:
+    """Get standard bounds for benchmark functions"""
+    bounds_dict = {
+        'sphere': [(-5.12, 5.12)] * dimensions,
+        'rastrigin': [(-5.12, 5.12)] * dimensions,
+        'ackley': [(-32.768, 32.768)] * dimensions,
+        'rosenbrock': [(-2.048, 2.048)] * dimensions,
+        'griewank': [(-600, 600)] * dimensions
+    }
+    return bounds_dict.get(function_name, [(-5.12, 5.12)] * dimensions)

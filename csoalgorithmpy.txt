@@ -1,0 +1,370 @@
+"""
+Cellular Structure Optimization (CSO) Algorithm
+Author: Milad Karimi
+License: MIT
+"""
+
+import numpy as np
+from scipy.spatial import KDTree
+import time
+from typing import Callable, List, Dict, Any
+
+class CellularStructureOptimizer:
+    """
+    Cellular Structure Optimization (CSO) Algorithm
+    A novel bio-inspired optimization algorithm based on cellular self-organization
+    """
+    
+    def __init__(self, 
+                 objective_func: Callable[[np.ndarray], float],
+                 bounds: List[tuple],
+                 pop_size: int = 50,
+                 max_iter: int = 1000,
+                 random_state: int = None):
+        """
+        Initialize CSO algorithm
+        
+        Parameters:
+        -----------
+        objective_func : callable
+            Objective function to minimize
+        bounds : list of tuples
+            Bounds for each dimension [(min, max), ...]
+        pop_size : int
+            Initial population size
+        max_iter : int
+            Maximum number of iterations
+        random_state : int
+            Random seed for reproducibility
+        """
+        
+        self.objective_func = objective_func
+        self.bounds = np.array(bounds)
+        self.pop_size = pop_size
+        self.max_iter = max_iter
+        self.dimensions = len(bounds)
+        
+        # Algorithm parameters
+        self.initial_mobility = 0.15
+        self.division_threshold = 0.7
+        self.apoptosis_threshold = 0.15
+        self.cooperation_radius = 0.2
+        
+        # Tracking variables
+        self.cells = []
+        self.global_best = None
+        self.best_fitness_history = []
+        self.function_evaluations = 0
+        self.execution_time = 0
+        
+        # Set random seed
+        if random_state is not None:
+            np.random.seed(random_state)
+    
+    def initialize_population(self) -> None:
+        """Initialize population of cells with random positions"""
+        self.cells = []
+        for i in range(self.pop_size):
+            cell = {
+                'position': np.random.uniform(self.bounds[:, 0], self.bounds[:, 1]),
+                'fitness': None,
+                'mobility': np.random.uniform(0.1, 1.0),
+                'growth_potential': 1.0,
+                'adhesion': np.random.uniform(0.1, 0.9),
+                'type': np.random.choice(['explorer', 'optimizer', 'builder']),
+                'age': 0,
+                'local_best_position': None,
+                'local_best_fitness': float('inf')
+            }
+            self.cells.append(cell)
+    
+    def evaluate_fitness(self) -> None:
+        """Evaluate fitness of all cells in population"""
+        for cell in self.cells:
+            cell['fitness'] = self.objective_func(cell['position'])
+            self.function_evaluations += 1
+            
+            # Update personal best
+            if cell['fitness'] < cell['local_best_fitness']:
+                cell['local_best_position'] = cell['position'].copy()
+                cell['local_best_fitness'] = cell['fitness']
+            
+            # Update global best
+            if self.global_best is None or cell['fitness'] < self.global_best['fitness']:
+                self.global_best = {
+                    'position': cell['position'].copy(),
+                    'fitness': cell['fitness']
+                }
+    
+    def find_neighbors(self, cell: Dict, radius: float = None) -> List[Dict]:
+        """Find neighboring cells within specified radius"""
+        if radius is None:
+            radius = self.cooperation_radius
+            
+        if len(self.cells) <= 1:
+            return []
+        
+        positions = np.array([c['position'] for c in self.cells])
+        kdtree = KDTree(positions)
+        indices = kdtree.query_ball_point(cell['position'], radius)
+        
+        neighbors = []
+        for i in indices:
+            if not np.array_equal(self.cells[i]['position'], cell['position']):
+                neighbors.append(self.cells[i])
+                
+        return neighbors
+    
+    def levy_flight(self, size: int, beta: float = 1.5) -> np.ndarray:
+        """Generate Levy flight step for exploration"""
+        # Simplified Levy distribution
+        sigma = 1.0
+        u = np.random.normal(0, sigma, size)
+        v = np.random.normal(0, 1, size)
+        step = u / (np.abs(v) ** (1 / beta))
+        return 0.01 * step
+    
+    def calculate_adaptive_mobility(self, cell: Dict, progress: float) -> float:
+        """Calculate adaptive mobility based on cell type and progress"""
+        base_mobility = cell['mobility']
+        time_factor = 1.0 - progress * 0.6
+        
+        # Adjust based on cell type
+        if cell['type'] == 'explorer':
+            type_factor = 1.3
+        elif cell['type'] == 'optimizer':
+            type_factor = 0.7
+        else:  # builder
+            type_factor = 1.0
+            
+        return base_mobility * time_factor * type_factor * self.initial_mobility
+    
+    def calculate_movement(self, cell: Dict, iteration: int) -> np.ndarray:
+        """Calculate cell movement based on type and neighbors"""
+        neighbors = self.find_neighbors(cell)
+        progress = iteration / self.max_iter
+        adaptive_mobility = self.calculate_adaptive_mobility(cell, progress)
+        
+        if cell['type'] == 'explorer':
+            # Explorer: Levy flights + random exploration
+            levy_step = self.levy_flight(self.dimensions)
+            random_step = np.random.normal(0, 0.3, self.dimensions)
+            movement = (levy_step + random_step) * adaptive_mobility * 1.5
+            
+        elif cell['type'] == 'optimizer':
+            # Optimizer: Social learning + global best
+            if len(neighbors) > 0:
+                best_neighbor = min(neighbors, key=lambda x: x['fitness'])
+                social_force = best_neighbor['position'] - cell['position']
+            else:
+                social_force = np.zeros(self.dimensions)
+                
+            if self.global_best:
+                global_force = self.global_best['position'] - cell['position']
+            else:
+                global_force = np.zeros(self.dimensions)
+                
+            movement = (0.6 * social_force + 0.4 * global_force) * adaptive_mobility * 0.1
+            
+        else:  # builder
+            # Builder: Social cohesion + diversity
+            if len(neighbors) > 0:
+                neighbor_positions = np.array([n['position'] for n in neighbors])
+                center_of_mass = np.mean(neighbor_positions, axis=0)
+                social_force = center_of_mass - cell['position']
+            else:
+                social_force = np.random.normal(0, 0.1, self.dimensions)
+                
+            random_force = np.random.normal(0, 0.1, self.dimensions)
+            movement = (0.7 * social_force + 0.3 * random_force) * adaptive_mobility * 0.2
+            
+        return movement
+    
+    def should_divide(self, cell: Dict) -> bool:
+        """Check if cell should divide based on multiple conditions"""
+        if len(self.cells) >= self.pop_size * 2:
+            return False
+            
+        # Condition 1: Sufficient growth potential
+        condition1 = cell['growth_potential'] > self.division_threshold
+        
+        # Condition 2: Better than median fitness
+        fitnesses = [c['fitness'] for c in self.cells if c['fitness'] is not None]
+        if len(fitnesses) > 0:
+            median_fitness = np.median(fitnesses)
+            condition2 = cell['fitness'] < median_fitness
+        else:
+            condition2 = False
+        
+        # Condition 3: Low local density
+        neighbors = self.find_neighbors(cell, radius=0.3)
+        condition3 = len(neighbors) < 8
+        
+        # Condition 4: Mature age
+        condition4 = cell['age'] > 10
+        
+        return condition1 and condition2 and condition3 and condition4
+    
+    def cell_division(self) -> None:
+        """Perform cell division for qualified cells"""
+        new_cells = []
+        
+        for cell in self.cells:
+            if self.should_divide(cell):
+                # Create offspring with small mutation
+                mutation = np.random.normal(0, 0.05, self.dimensions)
+                child_position = cell['position'] + mutation
+                child_position = np.clip(child_position, self.bounds[:, 0], self.bounds[:, 1])
+                
+                child_cell = {
+                    'position': child_position,
+                    'fitness': None,
+                    'mobility': np.clip(cell['mobility'] + np.random.normal(0, 0.1), 0.1, 1.0),
+                    'growth_potential': 1.0,
+                    'adhesion': np.clip(cell['adhesion'] + np.random.normal(0, 0.05), 0.1, 0.9),
+                    'type': cell['type'],
+                    'age': 0,
+                    'local_best_position': None,
+                    'local_best_fitness': float('inf')
+                }
+                new_cells.append(child_cell)
+                
+                # Reduce parent's growth potential
+                cell['growth_potential'] *= 0.6
+        
+        self.cells.extend(new_cells)
+    
+    def should_die(self, cell: Dict) -> bool:
+        """Check if cell should undergo apoptosis"""
+        if len(self.cells) <= self.pop_size // 2:
+            return False
+            
+        fitnesses = [c['fitness'] for c in self.cells if c['fitness'] is not None]
+        if len(fitnesses) == 0:
+            return False
+            
+        # Condition 1: Poor performance (bottom 25%)
+        percentile_75 = np.percentile(fitnesses, 75)
+        condition1 = cell['fitness'] > percentile_75
+        
+        # Condition 2: Very low growth potential
+        condition2 = cell['growth_potential'] < self.apoptosis_threshold
+        
+        # Condition 3: Old age
+        condition3 = cell['age'] > 100
+        
+        # Condition 4: Isolation
+        neighbors = self.find_neighbors(cell, radius=0.4)
+        condition4 = len(neighbors) == 0 and cell['age'] > 20
+        
+        return condition1 or condition2 or condition3 or condition4
+    
+    def apoptosis(self) -> None:
+        """Remove cells that should undergo apoptosis"""
+        self.cells = [cell for cell in self.cells if not self.should_die(cell)]
+    
+    def update_parameters(self, iteration: int) -> None:
+        """Update algorithm parameters adaptively"""
+        progress = iteration / self.max_iter
+        
+        # Gradually reduce cooperation radius
+        self.cooperation_radius = 0.2 * (1 - progress * 0.5)
+        
+        # Adjust division threshold based on diversity
+        if len(self.cells) > 10:
+            positions = np.array([c['position'] for c in self.cells])
+            diversity = np.mean(np.std(positions, axis=0))
+            
+            if diversity < 0.1:  # Low diversity
+                self.division_threshold *= 0.9
+            elif diversity > 0.3:  # High diversity
+                self.division_threshold *= 1.1
+            
+            self.division_threshold = np.clip(self.division_threshold, 0.5, 0.9)
+    
+    def optimize(self) -> Dict[str, Any]:
+        """
+        Main optimization procedure
+        
+        Returns:
+        --------
+        dict : Best solution found and optimization statistics
+        """
+        print("?? Starting Cellular Structure Optimization (CSO)")
+        print(f"Population: {self.pop_size}, Max iterations: {self.max_iter}")
+        print("=" * 60)
+        
+        start_time = time.time()
+        
+        # Initialize population
+        self.initialize_population()
+        self.evaluate_fitness()
+        
+        # Main optimization loop
+        for iteration in range(self.max_iter):
+            # Cell movement phase
+            for cell in self.cells:
+                movement = self.calculate_movement(cell, iteration)
+                cell['position'] += movement
+                cell['position'] = np.clip(cell['position'], self.bounds[:, 0], self.bounds[:, 1])
+                cell['age'] += 1
+            
+            # Evaluation and population management
+            self.evaluate_fitness()
+            self.cell_division()
+            self.apoptosis()
+            self.update_parameters(iteration)
+            
+            # Track best fitness
+            self.best_fitness_history.append(self.global_best['fitness'])
+            
+            # Progress reporting
+            if iteration % 50 == 0 or iteration == self.max_iter - 1:
+                current_time = time.time() - start_time
+                current_population = len(self.cells)
+                print(f"Iteration {iteration:4d}: "
+                      f"Best fitness = {self.global_best['fitness']:.6f}, "
+                      f"Population = {current_population:3d}, "
+                      f"Time = {current_time:.2f}s")
+        
+        # Final statistics
+        self.execution_time = time.time() - start_time
+        
+        print("=" * 60)
+        print(f"? Optimization completed in {self.execution_time:.2f} seconds")
+        print(f"?? Function evaluations: {self.function_evaluations}")
+        print(f"?? Best solution: {self.global_best['fitness']:.8f}")
+        
+        return {
+            'best_solution': self.global_best['position'],
+            'best_fitness': self.global_best['fitness'],
+            'function_evaluations': self.function_evaluations,
+            'execution_time': self.execution_time,
+            'convergence_history': self.best_fitness_history,
+            'final_population_size': len(self.cells)
+        }
+
+
+# Example usage and demonstration
+if __name__ == "__main__":
+    # Example: Sphere function optimization
+    def sphere_function(x):
+        return np.sum(x**2)
+    
+    # Define problem bounds
+    bounds = [(-5.12, 5.12)] * 3  # 3-dimensional problem
+    
+    # Create and run CSO optimizer
+    cso = CellularStructureOptimizer(
+        objective_func=sphere_function,
+        bounds=bounds,
+        pop_size=30,
+        max_iter=100,
+        random_state=42
+    )
+    
+    # Run optimization
+    result = cso.optimize()
+    
+    print(f"\nBest solution found: {result['best_solution']}")
+    print(f"Best fitness: {result['best_fitness']:.10f}")
